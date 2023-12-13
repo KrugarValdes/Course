@@ -1,0 +1,118 @@
+import requests
+from datetime import datetime
+
+api_key = "apik_0sRavrCGbq9V8S9DUQl8ASQNzWjW11"
+
+def format_event(event):
+    event_time = datetime.strptime(event["occurrenceDatetime"], "%Y-%m-%dT%H:%M:%S")
+    formatted_date = event_time.strftime("%d.%m.%Y")
+    formatted_time = event_time.strftime("%H:%M:%S")
+
+    return {
+        "Событие": event['status'],
+        "Дата": formatted_date,
+        "Время": formatted_time,
+        "Место": event['location'],
+        "Курьер": event['courierCode'],
+        "Детали": event['statusMilestone']
+    }
+
+def get_tracking_info(tracking_number):
+    url = "https://api.ship24.com/public/v1/trackers/track"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+    data = {
+        "trackingNumber": tracking_number,
+    }
+
+    response = requests.post(url, headers=headers, json=data)
+
+    if response.status_code == 200 or response.status_code == 201:
+        tracking_info = response.json()["data"]["trackings"][0]
+        events = tracking_info.get("events", [])
+        formatted_events = [format_event(event) for event in events]
+        return formatted_events
+    elif response.status_code == 401:
+        error_data = response.json()
+        return [{"Error": f"{response.status_code}, {error_data['errors'][0]['message']}"}]
+    else:
+        return [{"Error": f"{response.status_code}, {response.text}"}]
+
+#print(get_tracking_info("LK201861585CN"))
+
+print(get_tracking_info("LK201861585CN"))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def add_tracking_state_to_database(tracking_number, event):
+    conn = sqlite3.connect('tracking_database.db')
+    cursor = conn.cursor()
+
+    formatted_event = format_event(event)
+
+    cursor.execute('''
+        INSERT INTO events
+        (tracking_number_id, event_type, event_date, event_time, event_location, event_courier, event_details)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (tracking_number,
+          formatted_event.get("Событие"),
+          formatted_event.get("Дата"),
+          formatted_event.get("Время"),
+          formatted_event.get("Место"),
+          formatted_event.get("Курьер"),
+          formatted_event.get("Детали")))
+
+    conn.commit()
+    conn.close()
+
+
+
+def get_tracking_info_and_add_to_database(tracking_number, api_key):
+    conn = sqlite3.connect('tracking_database.db')
+    cursor = conn.cursor()
+
+    url = "https://api.ship24.com/public/v1/trackers/track"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+    data = {
+        "trackingNumber": tracking_number,
+    }
+
+    response = requests.post(url, headers=headers, json=data)
+
+    if response.status_code == 200 or response.status_code == 201:
+        tracking_info = response.json()["data"]["trackings"][0]
+        events = tracking_info.get("events", [])
+
+        # Add each event to the database
+        for event in events:
+            add_tracking_state_to_database(tracking_number, event)
+
+        conn.commit()
+        conn.close()
+
+        return events
+    elif response.status_code == 401:
+        error_data = response.json()
+        conn.close()
+        return [{"Error": f"{response.status_code}, {error_data['errors'][0]['message']}"}]
+    else:
+        conn.close()
+        return [{"Error": f"{response.status_code}, {response.text}"}]
